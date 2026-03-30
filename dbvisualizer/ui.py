@@ -111,7 +111,7 @@ class AppBuilder:
                         y_axis = gr.Dropdown(choices=[], label="Y Axis", multiselect=True, interactive=True)
                         group_by = gr.Dropdown(choices=[], label="Group By", multiselect=True, interactive=True)
                         agg_method = gr.Dropdown(
-                            ["mean", "max", "min", "sum", "median"],
+                            ["mean", "max", "min", "sum", "median", "first", "last"],
                             value="mean", label="Aggregation", interactive=True,
                         )
 
