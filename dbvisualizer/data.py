@@ -57,12 +57,16 @@ class ColumnInfo:
 
 class TableAnalyzer:
     CATEGORICAL_THRESHOLD = 50
+    UNIQUENESS_RATIO_LIMIT = 0.8
+    AVG_VALUE_LENGTH_LIMIT = 50
     IGNORED_COLUMNS = ["Timestamp", "Config_File", "id", "ID", "Unnamed"]
 
     def analyze(self, df: pd.DataFrame) -> List[ColumnInfo]:
         infos = []
         if df.empty:
             return infos
+
+        n_rows = len(df)
 
         for col in df.columns:
             if any(ignored.lower() in col.lower() for ignored in self.IGNORED_COLUMNS):
@@ -81,12 +85,25 @@ class TableAnalyzer:
             is_numeric = pd.api.types.is_numeric_dtype(sample_series) or \
                          (sample_series.notna().sum() > 0 and sample_series.dtype != object)
 
+            # Check if column looks like an identifier (almost all values unique)
+            is_id_like = (n_rows > 5
+                          and n_unique > 0
+                          and n_unique / n_rows > self.UNIQUENESS_RATIO_LIMIT)
+
+            # Check if values are too long for checkbox buttons
+            avg_len = df[col].dropna().astype(str).str.len().mean()
+            is_long_text = avg_len > self.AVG_VALUE_LENGTH_LIMIT
+
             if is_numeric:
-                if n_unique <= self.CATEGORICAL_THRESHOLD and n_unique > 0:
+                if (n_unique <= self.CATEGORICAL_THRESHOLD
+                        and n_unique > 0
+                        and not is_id_like):
                     col_type = "categorical_numeric"
                 else:
                     col_type = "numeric"
-            elif n_unique <= self.CATEGORICAL_THRESHOLD:
+            elif (n_unique <= self.CATEGORICAL_THRESHOLD
+                  and not is_id_like
+                  and not is_long_text):
                 col_type = "categorical"
             else:
                 col_type = "text"
