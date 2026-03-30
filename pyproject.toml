@@ -6,10 +6,12 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "gradio>=6.5.1",
+    "kaleido>=1.2.0",
     "matplotlib>=3.10.8",
     "natsort>=8.4.0",
     "numpy>=2.4.2",
     "pandas>=3.0.0",
+    "plotly>=6.6.0",
     "pyinstaller>=6.18.0",
     "seaborn>=0.13.2",
 ]

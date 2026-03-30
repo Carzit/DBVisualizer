@@ -1,12 +1,11 @@
 import logging
 from typing import List
 
-import matplotlib.pyplot as plt
 import pandas as pd
 import gradio as gr
 
 from dbvisualizer.data import DBManager, TableAnalyzer, DataFilter, ColumnInfo
-from dbvisualizer.plot import PlotConfig, PlotEngine
+from dbvisualizer.plot import PlotConfig, PlotEngine, _empty_fig
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +109,7 @@ class AppBuilder:
                         x_axis = gr.Dropdown(choices=[], label="X Axis", interactive=True)
                         y_axis = gr.Dropdown(choices=[], label="Y Axis", multiselect=True, interactive=True)
                         group_by = gr.Dropdown(choices=[], label="Group By", multiselect=True, interactive=True)
+                        split_by = gr.Dropdown(choices=[], label="Split By", multiselect=True, interactive=True)
                         agg_method = gr.Dropdown(
                             ["mean", "max", "min", "sum", "median", "first", "last"],
                             value="mean", label="Aggregation", interactive=True,
@@ -203,10 +203,6 @@ class AppBuilder:
                 df = self.db_manager.load_table(db_path, table_name)
 
                 if df.empty:
-                    empty_fig = plt.figure()
-                    ax = empty_fig.add_subplot(111)
-                    ax.text(0.5, 0.5, "No data loaded", ha='center', va='center')
-                    ax.set_xlim(0, 1); ax.set_ylim(0, 1); ax.axis('off')
                     return (
                         pd.DataFrame(),
                         {},
@@ -214,9 +210,10 @@ class AppBuilder:
                         gr.Dropdown(choices=[], value=None),
                         gr.Dropdown(choices=[], value=[]),
                         gr.Dropdown(choices=[], value=[]),
+                        gr.Dropdown(choices=[], value=[]),
                         pd.DataFrame(),
-                        empty_fig,
-                        empty_fig,
+                        None,
+                        None,
                         "*No data*",
                     )
 
@@ -249,6 +246,7 @@ class AppBuilder:
                     gr.Dropdown(choices=all_cols, value=dx, interactive=True),
                     gr.Dropdown(choices=numeric_cols, value=dy, interactive=True),
                     gr.Dropdown(choices=all_cols, value=[], interactive=True),
+                    gr.Dropdown(choices=all_cols, value=[], interactive=True),
                     df.head(50),
                     None,
                     None,
@@ -259,30 +257,28 @@ class AppBuilder:
                 handle_table_change,
                 inputs=[db_dropdown, table_dropdown],
                 outputs=[df_state, filter_state, all_values_state, x_axis, y_axis, group_by,
-                         data_table, plot_output, fig_state, status_text],
+                         split_by, data_table, plot_output, fig_state, status_text],
             )
 
             # --- DRAW CHART ---
-            def on_generate_click(df, x, y, g, agg, ctype, filters, all_values):
-                logger.info(f"DRAW CHART: X={x}, Y={y}, GroupBy={g}, Agg={agg}, Chart={ctype}")
+            def on_generate_click(df, x, y, g, s, agg, ctype, filters, all_values):
+                logger.info(f"DRAW CHART: X={x}, Y={y}, GroupBy={g}, SplitBy={s}, Agg={agg}, Chart={ctype}")
 
                 if not isinstance(df, pd.DataFrame) or df.empty:
-                    fig = plt.figure()
-                    ax = fig.add_subplot(111)
-                    ax.text(0.5, 0.5, "No data loaded", ha='center', va='center', color='red')
-                    ax.set_xlim(0, 1); ax.set_ylim(0, 1); ax.axis('off')
-                    return fig, fig, pd.DataFrame(), "*No data loaded*"
+                    return _empty_fig("No data loaded"), None, pd.DataFrame(), "*No data loaded*"
 
                 filtered_df = DataFilter.apply(df, filters, all_values)
 
                 y_list = y if isinstance(y, list) else ([y] if y else [])
                 g_list = g if isinstance(g, list) else ([g] if g else [])
+                s_list = s if isinstance(s, list) else ([s] if s else [])
 
                 config = PlotConfig(
                     chart_type=ctype,
                     x_col=x,
                     y_cols=y_list,
                     group_by=g_list,
+                    split_by=s_list,
                     agg_method=agg,
                 )
 
@@ -314,7 +310,7 @@ class AppBuilder:
 
             btn_generate.click(
                 on_generate_click,
-                inputs=[df_state, x_axis, y_axis, group_by, agg_method, chart_type,
+                inputs=[df_state, x_axis, y_axis, group_by, split_by, agg_method, chart_type,
                         filter_state, all_values_state],
                 outputs=[plot_output, fig_state, data_table, status_text],
             )
