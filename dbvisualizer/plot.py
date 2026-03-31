@@ -12,9 +12,19 @@ logger = logging.getLogger(__name__)
 SERIES_WARNING_THRESHOLD = 20
 SPLIT_WARNING_THRESHOLD = 30
 
-# Fixed per-subplot dimensions (pixels)
+# Plotly's default qualitative color sequence
+_COLORS = [
+    "#636EFA", "#EF553B", "#00CC96", "#AB63FA", "#FFA15A",
+    "#19D3F3", "#FF6692", "#B6E880", "#FF97FF", "#FECB52",
+]
+
+# Per-subplot dimensions (pixels)
 CELL_W = 520
 CELL_H = 400
+# Minimum width for single-panel charts so they fill the preview area
+MIN_FIGURE_W = 900
+# Maximum legend label length before truncation
+MAX_LEGEND_LABEL = 40
 
 
 @dataclass
@@ -54,10 +64,19 @@ def _smart_sort(df: pd.DataFrame, col: str) -> pd.DataFrame:
         return df
 
 
+def _truncate(text: str, max_len: int = MAX_LEGEND_LABEL) -> str:
+    """Truncate text with ellipsis if it exceeds max_len."""
+    if len(text) <= max_len:
+        return text
+    return text[: max_len - 1] + "…"
+
+
 def _make_group_label(grp_cols: list, group_val) -> str:
     if isinstance(group_val, tuple):
-        return " | ".join(f"{k}={v}" for k, v in zip(grp_cols, group_val))
-    return f"{grp_cols[0]}={group_val}"
+        raw = " | ".join(f"{k}={v}" for k, v in zip(grp_cols, group_val))
+    else:
+        raw = f"{grp_cols[0]}={group_val}"
+    return _truncate(raw)
 
 
 def _make_split_label(split_cols: list, split_key) -> str:
@@ -130,8 +149,15 @@ class PlotEngine:
             horizontal_spacing=0.04 if n_cols > 1 else 0.05,
         )
 
-        # Track which legend groups have been shown (to avoid duplicate entries)
-        shown_legend_groups = set()
+        # Build a stable label → color mapping so every subplot uses the
+        # same color for the same legend group.
+        color_map: dict[str, str] = {}
+        shown_legend_groups: set[str] = set()
+
+        def _assign_color(label: str) -> str:
+            if label not in color_map:
+                color_map[label] = _COLORS[len(color_map) % len(_COLORS)]
+            return color_map[label]
 
         for j, (split_key, split_df) in enumerate(split_groups):
             for i, y_col in enumerate(config.y_cols):
@@ -167,20 +193,22 @@ class PlotEngine:
 
                         for group_val, group_df in agg_df.groupby(grp_cols):
                             label = _make_group_label(grp_cols, group_val)
+                            color = _assign_color(label)
                             show_legend = label not in shown_legend_groups
                             shown_legend_groups.add(label)
                             self._add_trace(fig, group_df, config.x_col, y_col,
                                             config.chart_type, label, show_legend,
-                                            row=i + 1, col=j + 1)
+                                            row=i + 1, col=j + 1, color=color)
                     else:
                         agg_df = clean_df.groupby(config.x_col, as_index=False)[y_col].agg(config.agg_method)
                         n_series = 1
                         label = y_col
+                        color = _assign_color(label)
                         show_legend = label not in shown_legend_groups
                         shown_legend_groups.add(label)
                         self._add_trace(fig, agg_df, config.x_col, y_col,
                                         config.chart_type, label, show_legend,
-                                        row=i + 1, col=j + 1)
+                                        row=i + 1, col=j + 1, color=color)
 
                 except Exception as e:
                     logger.error(f"Plot Error for {y_col}: {e}", exc_info=True)
@@ -200,15 +228,28 @@ class PlotEngine:
         for j in range(n_cols):
             fig.update_xaxes(title_text=config.x_col, row=n_rows, col=j + 1)
 
+        fig_w = max(MIN_FIGURE_W, CELL_W * n_cols)
+        fig_h = CELL_H * n_rows
+
+        # Semi-transparent legend overlaid at bottom-right with small font
+        # so it never pushes content out of the canvas.
+        legend_opts = dict(
+            yanchor="bottom",
+            y=0.02,
+            xanchor="right",
+            x=0.98,
+            bgcolor="rgba(255,255,255,0.65)",
+            borderwidth=0,
+            font=dict(size=10),
+        )
+        margin = dict(l=60, r=30, t=40, b=50)
+
         fig.update_layout(
-            width=CELL_W * n_cols,
-            height=CELL_H * n_rows,
+            width=fig_w,
+            height=fig_h,
             template="plotly_white",
-            legend=dict(
-                bgcolor="rgba(255,255,255,0.5)",
-                borderwidth=0,
-            ),
-            margin=dict(l=60, r=30, t=40, b=50),
+            legend=legend_opts,
+            margin=margin,
         )
 
         return fig, warning
@@ -216,7 +257,7 @@ class PlotEngine:
     @staticmethod
     def _add_trace(fig: go.Figure, df: pd.DataFrame, x_col: str, y_col: str,
                    chart_type: str, label: str, show_legend: bool,
-                   row: int, col: int):
+                   row: int, col: int, color: str | None = None):
         """Add a single trace to the subplot grid."""
         x = df[x_col]
         y = df[y_col]
@@ -224,20 +265,23 @@ class PlotEngine:
         if chart_type == "LinePlot":
             fig.add_trace(
                 go.Scatter(x=x, y=y, mode='lines+markers', name=label,
-                           legendgroup=label, showlegend=show_legend),
+                           legendgroup=label, showlegend=show_legend,
+                           line=dict(color=color),
+                           marker=dict(color=color)),
                 row=row, col=col,
             )
         elif chart_type == "BarPlot":
             fig.add_trace(
                 go.Bar(x=x, y=y, name=label,
-                       legendgroup=label, showlegend=show_legend),
+                       legendgroup=label, showlegend=show_legend,
+                       marker_color=color),
                 row=row, col=col,
             )
         elif chart_type == "ScatterPlot":
             fig.add_trace(
                 go.Scatter(x=x, y=y, mode='markers', name=label,
                            legendgroup=label, showlegend=show_legend,
-                           marker=dict(size=8)),
+                           marker=dict(size=8, color=color)),
                 row=row, col=col,
             )
 
